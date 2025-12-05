@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Club - Reading Schedule Generator</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; background-color: #f9f9f9; color: #333; }
+        h1 { color: #2c3e50; }
+        .controls { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 2rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        .full-width { grid-column: 1 / -1; }
+        label { display: block; margin-bottom: 0.5rem; font-weight: bold; font-size: 0.9rem; color: #555; }
+        input, textarea { width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; box-sizing: border-box; }
+        textarea { height: 150px; font-family: monospace; font-size: 0.9rem; }
+        button { background-color: #3498db; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem; margin-top: 1rem; }
+        button:hover { background-color: #2980b9; }
+        
+        #result-area { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        pre { white-space: pre-wrap; font-family: monospace; font-size: 1rem; color: #2c3e50; margin: 0; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+    <h1>📚 Create Reading Schedule</h1>
+    <p>Paste your list (Title newline Cumulative count) below.</p>
+
+    <div class="controls">
+        <div>
+            <label for="startDate">Start date:</label>
+            <input type="date" id="startDate">
+        </div>
+        <div>
+            <label for="speed">Characters per day:</label>
+            <input type="number" id="speed" value="2500" step="100">
+        </div>
+
+        <div class="full-width">
+            <label for="rawInput">Rawdata (Title + Cumulative count):</label>
+            <textarea id="rawInput" placeholder="表紙
+0
+プロローグ
+252
+新しい生活
+2094
+おうち探索
+7525
+END
+8000"></textarea>
+        </div>
+        
+        <div class="full-width">
+            <button onclick="generateSchedule()">Generate Schedule</button>
+        </div>
+    </div>
+
+    <div id="result-area" class="hidden">
+        <h3>Result:</h3>
+        <pre id="output"></pre>
+    </div>
+
+    <script>
+        document.getElementById('startDate').valueAsDate = new Date();
+
+        function toKanji(num) {
+            const basic = ['','一','二','三','四','五','六','七','八','九','十'];
+            if (num <= 10) return basic[num];
+            if (num < 20) return '十' + basic[num % 10];
+            if (num % 10 === 0) return basic[Math.floor(num/10)] + '十';
+            return basic[Math.floor(num/10)] + '十' + basic[num % 10];
+        }
+
+        function formatDate(date) {
+            const d = new Date(date);
+            const day = d.getDate().toString().padStart(2, '0');
+            const month = d.toLocaleString('en-US', { month: 'short' });
+            return `${day}. ${month}`;
+        }
+
+        function generateSchedule() {
+            const raw = document.getElementById('rawInput').value.trim();
+            const speed = Number.parseInt(document.getElementById('speed').value) || 2500;
+            const startVal = document.getElementById('startDate').value;
+            
+            if (!raw || !startVal) {
+                alert("Fill in both the list and start date!");
+                return;
+            }
+
+            let currentDate = new Date(startVal);
+            // Dela upp på radbrytning och rensa tomma rader
+            const lines = raw.split('\n').map(l => l.trim()).filter(l => l !== "");
+            
+            let outputText = "";
+            let chapterIndex = 1;
+
+            // VIKTIG ÄNDRING: Vi loopar fram till lines.length - 2
+            // Eftersom vi måste titta på "nästa par" för att räkna ut längden.
+            // i = Titel, i+1 = Startvärde, i+3 = Nästa Startvärde
+            for (let i = 0; i < lines.length - 1; i += 2) {
+                const title = lines[i];
+                const startCount =Number. parseInt(lines[i+1]);
+                
+                // Om det inte finns en "nästa siffra" (t.ex. vid END), avbryt loopen för utskrift
+                if (!lines[i+3]) break;
+
+                const nextCount = Number.parseInt(lines[i+3]);
+
+                if (Number.isNaN(startCount) || Number.isNaN(nextCount)) continue;
+
+                // Uträkning: Nästa värde - Nuvarande värde
+                const length = nextCount - startCount;
+
+                // Filtrera bort väldigt korta avsnitt (t.ex. '表紙' om den är 0-200 tecken och du vill skippa den)
+                // Ändra 100 till 0 om du vill visa exakt allt.
+                if (length < 100) continue; 
+
+                const daysNeeded = Math.ceil(length / speed);
+                
+                let endDate = new Date(currentDate);
+                // Om det tar 1 dag, är slutdatum = startdatum (därav daysNeeded - 1 men max 0)
+                endDate.setDate(currentDate.getDate() + Math.max(0, daysNeeded - 1));
+
+                const roundedLength = Math.round(length / 100) * 100;
+                const startStr = formatDate(currentDate);
+                const endStr = formatDate(endDate);
+                const chapNum = toKanji(chapterIndex);
+
+                let dateRange = (daysNeeded <= 1) ? `${startStr}` : `${startStr}-${endStr}`;
+                
+                outputText += `${chapNum}章　${title} ${dateRange} (~${roundedLength} chars)\n`;
+
+                currentDate = new Date(endDate);
+                currentDate.setDate(currentDate.getDate() + 1);
+                chapterIndex++;
+            }
+
+            document.getElementById('output').textContent = outputText;
+            document.getElementById('result-area').classList.remove('hidden');
+        }
+    </script>
+</body>
+</html>
