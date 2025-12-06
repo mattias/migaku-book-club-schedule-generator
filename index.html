@@ -17,8 +17,8 @@
         input, textarea, select { width: 100%; padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-family: inherit; box-sizing: border-box; }
         textarea { height: 150px; font-family: monospace; font-size: 0.9rem; }
         
-        button { background-color: #3498db; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem; margin-top: 1rem; width: 100%; grid-column: 1 / -1; }
-        button:hover { background-color: #2980b9; }
+        button { background-color: #2c3e50; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 1rem; margin-top: 1rem; width: 100%; grid-column: 1 / -1; }
+        button:hover { background-color: #1a252f; }
         
         #result-area { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         pre { white-space: pre-wrap; font-family: monospace; font-size: 1rem; color: #2c3e50; margin: 0; }
@@ -222,6 +222,30 @@
 
 
         /**
+         * Helper: Try to group short chapters into one day
+         */
+        function tryGroupChapters(chapterData, startIndex, dailyTarget, maxGroupThreshold) {
+            const chaptersToGroup = [chapterData[startIndex]];
+            let combinedRead = chapterData[startIndex].roundedLength;
+            let j = startIndex + 1;
+
+            while (j < chapterData.length) {
+                const nextChap = chapterData[j];
+                const tentativeTotal = combinedRead + nextChap.roundedLength;
+
+                if (tentativeTotal <= maxGroupThreshold) {
+                    chaptersToGroup.push(nextChap);
+                    combinedRead = tentativeTotal;
+                    j++;
+                } else {
+                    break;
+                }
+            }
+
+            return chaptersToGroup.length > 1 ? chaptersToGroup : null;
+        }
+
+        /**
          * MODE: Characters per Day (split & grouped)
          * LOGIC: Calculates the days needed for a chapter (splitting if too large). 
          * If the chapter is short (1 day), it looks ahead to group subsequent short chapters 
@@ -231,75 +255,39 @@
             let output = "";
             let chapterIndex = 0;
             const dailyTarget = speed;
-            const maxGroupThreshold = dailyTarget + 500; // Allow slight overshoot for grouping
+            const maxGroupThreshold = dailyTarget + 500;
+            const separator = (document.getElementById('chapterFormat').value === 'kanji') ? '　' : ' ';
 
             while (chapterIndex < chapterData.length) {
                 const chap = chapterData[chapterIndex];
-                const chapterStartDay = new Date(currentDate);
-                let readingLength = chap.roundedLength;
-                
-                // 1. Calculate days required for this chapter alone (splitting logic)
-                let daysRequired = Math.ceil(readingLength / dailyTarget);
+                const daysRequired = Math.ceil(chap.roundedLength / dailyTarget);
 
-                // 2. Grouping Check: Only if the chapter is short (1 day)
-                if (daysRequired === 1) {
-                    let chaptersToGroup = [chap];
-                    let combinedRead = chap.roundedLength;
-                    let j = chapterIndex + 1;
+                // Try grouping if chapter is 1 day
+                const groupedChapters = (daysRequired === 1) ? tryGroupChapters(chapterData, chapterIndex, dailyTarget, maxGroupThreshold) : null;
 
-                    // Look ahead for subsequent short chapters that fit the day's quota
-                    while (j < chapterData.length) {
-                        const nextChap = chapterData[j];
-                        const tentativeTotal = combinedRead + nextChap.roundedLength;
-
-                        if (tentativeTotal <= maxGroupThreshold) { 
-                            // Group if it fits the target + small overshoot
-                            chaptersToGroup.push(nextChap);
-                            combinedRead = tentativeTotal;
-                            j++;
-                        } else {
-                            break;
-                        }
+                if (groupedChapters) {
+                    const dateStr = formatDate(currentDate);
+                    for (const gChap of groupedChapters) {
+                        const prefix = getChapterPrefix(gChap.index);
+                        output += `${prefix}${separator}${gChap.title} ${dateStr} (~${gChap.roundedLength.toLocaleString()} chars)\n`;
                     }
-                    
-                    // If we found a group of 2 or more, process them
-                    if (chaptersToGroup.length > 1) {
-                        // This entire group takes 1 day. Output each chapter with the same date.
-                        const dateStr = formatDate(currentDate);
-                        
-                        for (const gChap of chaptersToGroup) {
-                            const prefix = getChapterPrefix(gChap.index);
-                            const separator = (document.getElementById('chapterFormat').value === 'kanji') ? '　' : ' ';
-                            // For a 1-day group, dateRange is just the date string
-                            output += `${prefix}${separator}${gChap.title} ${dateStr} (~${gChap.roundedLength.toLocaleString()} chars)\n`;
-                        }
-                        
-                        // Update index and date for the next iteration (after the group)
-                        chapterIndex += chaptersToGroup.length;
-                        currentDate = getNextDay(currentDate);
-                        continue; // Skip normal output logic below
-                    }
+                    chapterIndex += groupedChapters.length;
+                    currentDate = getNextDay(currentDate);
+                } else {
+                    const chapterStartDay = new Date(currentDate);
+                    let chapterEndDate = new Date(chapterStartDay);
+                    chapterEndDate.setDate(chapterStartDay.getDate() + daysRequired - 1);
+
+                    const startStr = formatDate(chapterStartDay);
+                    const endStr = formatDate(chapterEndDate);
+                    const chapPrefix = getChapterPrefix(chap.index);
+                    const dateRange = (daysRequired <= 1) ? startStr : `${startStr}-${endStr}`;
+
+                    output += `${chapPrefix}${separator}${chap.title} ${dateRange} (~${chap.roundedLength.toLocaleString()} chars)\n`;
+
+                    currentDate = getNextDay(chapterEndDate);
+                    chapterIndex++;
                 }
-                
-                // --- Normal Chapter Logic (Splitting or Single Day, no grouping found) ---
-                
-                // Calculate chapter end date
-                let chapterEndDate = new Date(chapterStartDay);
-                chapterEndDate.setDate(chapterStartDay.getDate() + daysRequired - 1);
-
-                const startStr = formatDate(chapterStartDay);
-                const endStr = formatDate(chapterEndDate);
-                const chapPrefix = getChapterPrefix(chap.index);
-                const separator = (document.getElementById('chapterFormat').value === 'kanji') ? '　' : ' ';
-
-                // Output format: Chapter Title Date Range (~Chars)
-                let dateRange = (daysRequired <= 1) ? `${startStr}` : `${startStr}-${endStr}`;
-                
-                output += `${chapPrefix}${separator}${chap.title} ${dateRange} (~${chap.roundedLength.toLocaleString()} chars)\n`;
-
-                // Update date for the next iteration (start date of the next chapter)
-                currentDate = getNextDay(chapterEndDate); 
-                chapterIndex++; // Move to next chapter
             }
             return output;
         }
@@ -347,6 +335,54 @@
         }
 
         /**
+         * Helper: Group chapters into a week based on daily target limits
+         */
+        function groupChaptersForWeek(chapterData, startIndex, maxDailyAllowance) {
+            let chaptersInWeek = [];
+            let currentWeekChars = 0;
+            let i = startIndex;
+
+            while (i < chapterData.length) {
+                const nextChap = chapterData[i];
+                const tentativeTotal = currentWeekChars + nextChap.roundedLength;
+                const tentativeDailyAvg = tentativeTotal / 7;
+                
+                if (currentWeekChars === 0 || tentativeDailyAvg <= maxDailyAllowance || i === chapterData.length - 1) {
+                    chaptersInWeek.push(nextChap);
+                    currentWeekChars = tentativeTotal;
+                    i++;
+                    if (i === chapterData.length) break;
+                } else {
+                    break;
+                }
+            }
+
+            return { chaptersInWeek, currentWeekChars, nextIndex: i };
+        }
+
+        /**
+         * Helper: Format week end date and label based on remaining chapters
+         */
+        function formatWeekEndDate(weekStart, currentWeekChars, dailyTarget, isLastWeek) {
+            let weekEnd = new Date(weekStart);
+            let weekLabel = '';
+
+            if (isLastWeek) {
+                const daysNeeded = Math.ceil(currentWeekChars / dailyTarget);
+                weekEnd.setDate(weekStart.getDate() + Math.max(0, daysNeeded - 1));
+                if (daysNeeded < 7) {
+                    weekLabel = ' (book ends)';
+                } else if (daysNeeded > 7) {
+                    weekLabel = ` (+ ${daysNeeded - 7} extra days)`;
+                }
+            } else {
+                weekEnd.setDate(weekStart.getDate() + 6);
+            }
+
+            return { weekEnd, weekLabel };
+        }
+
+        /**
          * MODE: Characters per Week (fixed daily target)
          * LOGIC: Uses user-defined maxDailyOvershoot to group chapters into weeks.
          */
@@ -354,92 +390,40 @@
             let output = "";
             let weekCount = 1;
             let currentChapterIndex = 0;
-            // The calculated maximum daily average allowed for inclusion
-            const maxDailyAllowance = dailyTarget + maxDailyOvershoot; 
+            const maxDailyAllowance = dailyTarget + maxDailyOvershoot;
             
             while (currentChapterIndex < chapterData.length) {
                 const weekStart = new Date(currentDate);
-                let weekEnd = new Date(currentDate);
-                weekEnd.setDate(currentDate.getDate() + 6);
+                const result = groupChaptersForWeek(chapterData, currentChapterIndex, maxDailyAllowance);
                 
-                let currentWeekChars = 0;
-                let chapterList = "";
-                let i = currentChapterIndex;
-                let chaptersInWeek = [];
+                if (result.chaptersInWeek.length === 0) break;
+
+                const isLastWeek = result.nextIndex >= chapterData.length;
+                const { weekEnd, weekLabel: endLabel } = formatWeekEndDate(weekStart, result.currentWeekChars, dailyTarget, isLastWeek);
+                const finalAvgCharsPerDay = Math.round((result.currentWeekChars / 7) / 100) * 100;
                 
-                // Group chapters
-                while (i < chapterData.length) {
-                    const nextChap = chapterData[i];
-                    const tentativeTotal = currentWeekChars + nextChap.roundedLength;
-                    const tentativeDailyAvg = tentativeTotal / 7;
-                    
-                    if (currentWeekChars === 0) {
-                        // 1. Always include the first chapter
-                        chaptersInWeek.push(nextChap);
-                        currentWeekChars = tentativeTotal;
-                        i++;
-                    } else if (i === chapterData.length - 1) {
-                        // 2. If it's the last chapter in the book, include it.
-                        chaptersInWeek.push(nextChap);
-                        currentWeekChars = tentativeTotal;
-                        i++;
-                        break; // End the week here
-                    } else if (tentativeDailyAvg <= maxDailyAllowance) {
-                        // 3. Inkludera om den dagliga genomsnittliga läsningen inte överskrider den definierade maxgränsen.
-                        chaptersInWeek.push(nextChap);
-                        currentWeekChars = tentativeTotal;
-                        i++;
-                    } else {
-                        // 4. The next chapter is too large to be included in this week.
-                        break;
-                    }
-                }
-                
-                if (chaptersInWeek.length === 0) break;
-                
-                const daysForThisWeek = 7;
-                const finalAvgCharsPerDay = Math.round((currentWeekChars / daysForThisWeek) / 100) * 100;
-                
-                let weekLabel = `WEEK ${weekCount}`;
+                let weekLabel = `WEEK ${weekCount}${endLabel}`;
                 let warningMessage = '';
 
-                // Check for warning (if the final average exceeds the allowed threshold)
                 if (finalAvgCharsPerDay > maxDailyAllowance) {
-                    // Corrected Swedish warning message
                     warningMessage = `<span class="warning"> (WARNING: Average exceeds your set limit by ${(finalAvgCharsPerDay - dailyTarget).toLocaleString()} chars/day)</span>`;
                 }
 
-                // Format final chapter list string
-                for (const chap of chaptersInWeek) {
+                let chapterList = "";
+                for (const chap of result.chaptersInWeek) {
                     const chapPrefix = getChapterPrefix(chap.index);
                     const separator = (document.getElementById('chapterFormat').value === 'kanji') ? '　' : ' ';
                     chapterList += `${chapPrefix}${separator}${chap.title} (~${chap.roundedLength.toLocaleString()} chars)\n`;
-                }
-                
-                // Adjust label for the final week (if it's not a full 7 days)
-                if (i >= chapterData.length) {
-                    const daysNeeded = Math.ceil(currentWeekChars / dailyTarget); 
-                    if (daysNeeded <= 7) {
-                        weekEnd = new Date(weekStart);
-                        weekEnd.setDate(weekStart.getDate() + Math.max(0, daysNeeded - 1));
-                        if (daysNeeded < 7) {
-                             weekLabel += ` (book ends)`;
-                        }
-                    } else {
-                        weekEnd = new Date(weekStart);
-                        weekEnd.setDate(weekStart.getDate() + Math.max(0, daysNeeded - 1));
-                        weekLabel += ` (+ ${daysNeeded - 7} extra days)`;
-                    }
                 }
 
                 output += `<div class="weekly-output-group">`;
                 output += `<h4>${weekLabel} (${formatDate(weekStart)} - ${formatDate(weekEnd)})${warningMessage}</h4>`;
                 output += `<pre>${chapterList}</pre>`;
-                output += `<p class="total">total reading: ${currentWeekChars.toLocaleString()} chars ≈ ${finalAvgCharsPerDay.toLocaleString()} chars per day</p>`;
+                output += `<p class="total">total reading: ${result.currentWeekChars.toLocaleString()} chars ≈ ${finalAvgCharsPerDay.toLocaleString()} chars per day</p>`;
                 output += `</div>`;
 
-                currentChapterIndex = i; // Move index to the start of the next chapter group
-                currentDate = getNextWeek(weekStart); 
+                currentChapterIndex = result.nextIndex;
+                currentDate = getNextWeek(weekStart);
                 weekCount++;
             }
             return output;
