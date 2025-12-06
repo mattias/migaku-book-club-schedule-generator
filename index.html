@@ -9,7 +9,7 @@
         
         h1 { color: #2c3e50; margin: 0 0 1rem 0; font-size: 1.8rem; }
         p { margin-bottom: 1.5rem; }
-        /* Justerat grid till 4 kolumner för att få plats med kapitelformatet */
+        /* Justerat grid till 4 kolumner */
         .controls { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 2rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
         .full-width { grid-column: 1 / -1; }
         
@@ -23,7 +23,7 @@
         #result-area { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         pre { white-space: pre-wrap; font-family: monospace; font-size: 1rem; color: #2c3e50; margin: 0; }
         
-        #speed-input, #chapters-per-week-input, #chars-per-week-input { transition: opacity 0.3s, max-height 0.3s; overflow: hidden; }
+        #speed-input, #chapters-per-week-input, #chars-per-week-target-input, #max-overshoot-input-container { transition: opacity 0.3s, max-height 0.3s; overflow: hidden; }
         .hidden { display: none; }
         
         /* Specific styling for weekly output */
@@ -44,7 +44,7 @@
         <div>
             <label for="scheduleMode">Schedule Mode:</label>
             <select id="scheduleMode" onchange="toggleInput()">
-                <option value="per_day">Characters per Day (per chapter)</option>
+                <option value="per_day">Characters per Day (split & grouped)</option>
                 <option value="per_week_chap">Chapters per Week (fixed chapters)</option>
                 <option value="per_week_char">Characters per Week (fixed daily target)</option>
             </select>
@@ -66,7 +66,7 @@
         <div></div>
 
         <div id="speed-input">
-            <label for="speed">Characters per day:</label>
+            <label for="speed">Characters per day target:</label>
             <input type="number" id="speed" value="3500" step="100">
         </div>
 
@@ -75,11 +75,16 @@
             <input type="number" id="chaptersPerWeek" value="5" min="1">
         </div>
         
-        <div id="chars-per-week-input" style="display: none;">
+        <div id="chars-per-week-target-input" style="display: none;">
             <label for="dailyTarget">Daily Character Target:</label>
             <input type="number" id="dailyTarget" value="3200" step="100">
         </div>
         
+        <div id="max-overshoot-input-container" style="display: none;">
+            <label for="maxOvershoot">Max Daily Overshoot (chars):</label>
+            <input type="number" id="maxOvershoot" value="500" min="0" step="100">
+        </div>
+
         <div class="full-width">
             <label for="rawInput">Raw Data (Title + Cumulative Count):</label>
             <textarea id="rawInput" placeholder="表紙
@@ -106,7 +111,11 @@
             
             document.getElementById('speed-input').style.display = (mode === 'per_day') ? 'block' : 'none';
             document.getElementById('chapters-per-week-input').style.display = (mode === 'per_week_chap') ? 'block' : 'none';
-            document.getElementById('chars-per-week-input').style.display = (mode === 'per_week_char') ? 'block' : 'none';
+            
+            // Handle the two inputs for per_week_char mode
+            const isPerWeekChar = (mode === 'per_week_char');
+            document.getElementById('chars-per-week-target-input').style.display = isPerWeekChar ? 'block' : 'none';
+            document.getElementById('max-overshoot-input-container').style.display = isPerWeekChar ? 'block' : 'none';
         }
 
         // --- Helper Functions ---
@@ -168,11 +177,11 @@
             
             for (let i = 0; i < lines.length - 1; i += 2) {
                 const title = lines[i];
-                const startCount = Number.parseInt(lines[i+1].replace(/,/g, '')); 
+                const startCount = Number.parseInt(lines[i+1]); 
                 
                 if (!lines[i+3]) break; 
 
-                const nextCount = Number.parseInt(lines[i+3].replace(/,/g, ''));
+                const nextCount = Number.parseInt(lines[i+3]);
 
                 if (Number.isNaN(startCount) || Number.isNaN(nextCount)) continue;
 
@@ -202,8 +211,9 @@
                 outputHtml = generatePerWeekScheduleByChapterCount(chapterData, currentDate, chaptersPerWeek);
             } else if (mode === 'per_week_char') {
                 const dailyTarget = Number.parseInt(document.getElementById('dailyTarget').value) || 3200;
+                const maxOvershoot = Number.parseInt(document.getElementById('maxOvershoot').value) || 500; // NEW
                 const weeklyTarget = dailyTarget * 7;
-                outputHtml = generatePerWeekScheduleByCharTarget(chapterData, currentDate, dailyTarget, weeklyTarget);
+                outputHtml = generatePerWeekScheduleByCharTarget(chapterData, currentDate, dailyTarget, weeklyTarget, maxOvershoot); // NEW
             }
 
             document.getElementById('output').innerHTML = outputHtml;
@@ -211,44 +221,89 @@
         }
 
 
-        // --- Schedule Generation Functions ---
-
         /**
-         * MODE: Characters per Day (per chapter)
-         * OPTIMIZATION: Uses "leftover" characters from shorter chapters to reduce days needed for subsequent chapters.
+         * MODE: Characters per Day (split & grouped)
+         * LOGIC: Calculates the days needed for a chapter (splitting if too large). 
+         * If the chapter is short (1 day), it looks ahead to group subsequent short chapters 
+         * onto the same day, keeping the original date range output format.
          */
         function generatePerDaySchedule(chapterData, currentDate, speed) {
             let output = "";
-            let leftoverChars = 0; 
-            
-            for (const chap of chapterData) {
-                let daysNeeded = Math.ceil(chap.length / speed);
+            let chapterIndex = 0;
+            const dailyTarget = speed;
+            const maxGroupThreshold = dailyTarget + 500; // Allow slight overshoot for grouping
 
-                // Use leftover to potentially reduce a day. Using speed as the threshold.
-                if (leftoverChars >= speed && daysNeeded > 1) {
-                    daysNeeded--;
-                    leftoverChars -= speed; 
+            while (chapterIndex < chapterData.length) {
+                const chap = chapterData[chapterIndex];
+                const chapterStartDay = new Date(currentDate);
+                let readingLength = chap.roundedLength;
+                
+                // 1. Calculate days required for this chapter alone (splitting logic)
+                let daysRequired = Math.ceil(readingLength / dailyTarget);
+
+                // 2. Grouping Check: Only if the chapter is short (1 day)
+                if (daysRequired === 1) {
+                    let chaptersToGroup = [chap];
+                    let combinedRead = chap.roundedLength;
+                    let j = chapterIndex + 1;
+
+                    // Look ahead for subsequent short chapters that fit the day's quota
+                    while (j < chapterData.length) {
+                        const nextChap = chapterData[j];
+                        const tentativeTotal = combinedRead + nextChap.roundedLength;
+
+                        if (tentativeTotal <= maxGroupThreshold) { 
+                            // Group if it fits the target + small overshoot
+                            chaptersToGroup.push(nextChap);
+                            combinedRead = tentativeTotal;
+                            j++;
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    // If we found a group of 2 or more, process them
+                    if (chaptersToGroup.length > 1) {
+                        // This entire group takes 1 day. Output each chapter with the same date.
+                        const dateStr = formatDate(currentDate);
+                        
+                        for (const gChap of chaptersToGroup) {
+                            const prefix = getChapterPrefix(gChap.index);
+                            const separator = (document.getElementById('chapterFormat').value === 'kanji') ? '　' : ' ';
+                            // For a 1-day group, dateRange is just the date string
+                            output += `${prefix}${separator}${gChap.title} ${dateStr} (~${gChap.roundedLength.toLocaleString()} chars)\n`;
+                        }
+                        
+                        // Update index and date for the next iteration (after the group)
+                        chapterIndex += chaptersToGroup.length;
+                        currentDate = getNextDay(currentDate);
+                        continue; // Skip normal output logic below
+                    }
                 }
+                
+                // --- Normal Chapter Logic (Splitting or Single Day, no grouping found) ---
+                
+                // Calculate chapter end date
+                let chapterEndDate = new Date(chapterStartDay);
+                chapterEndDate.setDate(chapterStartDay.getDate() + daysRequired - 1);
 
-                leftoverChars += (daysNeeded * speed) - chap.length;
-                if (leftoverChars < 0) leftoverChars = 0;
-
-                let endDate = new Date(currentDate);
-                endDate.setDate(currentDate.getDate() + Math.max(0, daysNeeded - 1));
-
-                const startStr = formatDate(currentDate);
-                const endStr = formatDate(endDate);
+                const startStr = formatDate(chapterStartDay);
+                const endStr = formatDate(chapterEndDate);
                 const chapPrefix = getChapterPrefix(chap.index);
                 const separator = (document.getElementById('chapterFormat').value === 'kanji') ? '　' : ' ';
 
-                let dateRange = (daysNeeded <= 1) ? `${startStr}` : `${startStr}-${endStr}`;
+                // Output format: Chapter Title Date Range (~Chars)
+                let dateRange = (daysRequired <= 1) ? `${startStr}` : `${startStr}-${endStr}`;
                 
                 output += `${chapPrefix}${separator}${chap.title} ${dateRange} (~${chap.roundedLength.toLocaleString()} chars)\n`;
 
-                currentDate = getNextDay(endDate);
+                // Update date for the next iteration (start date of the next chapter)
+                currentDate = getNextDay(chapterEndDate); 
+                chapterIndex++; // Move to next chapter
             }
             return output;
         }
+
 
         function generatePerWeekScheduleByChapterCount(chapterData, currentDate, chaptersPerWeek) {
             let output = "";
@@ -293,13 +348,14 @@
 
         /**
          * MODE: Characters per Week (fixed daily target)
-         * NY LOGIK: Tillåter överskridning av maxgränsen om det innebär att sista kapitlet läggs till.
+         * LOGIC: Uses user-defined maxDailyOvershoot to group chapters into weeks.
          */
-        function generatePerWeekScheduleByCharTarget(chapterData, currentDate, dailyTarget, weeklyTarget) {
+        function generatePerWeekScheduleByCharTarget(chapterData, currentDate, dailyTarget, weeklyTarget, maxDailyOvershoot) {
             let output = "";
             let weekCount = 1;
             let currentChapterIndex = 0;
-            const maxDailyThreshold = dailyTarget + 1000; // Warning threshold
+            // The calculated maximum daily average allowed for inclusion
+            const maxDailyAllowance = dailyTarget + maxDailyOvershoot; 
             
             while (currentChapterIndex < chapterData.length) {
                 const weekStart = new Date(currentDate);
@@ -311,26 +367,30 @@
                 let i = currentChapterIndex;
                 let chaptersInWeek = [];
                 
-                // Gruppera kapitel
+                // Group chapters
                 while (i < chapterData.length) {
                     const nextChap = chapterData[i];
                     const tentativeTotal = currentWeekChars + nextChap.roundedLength;
                     const tentativeDailyAvg = tentativeTotal / 7;
                     
-                    if (currentWeekChars === 0 || tentativeDailyAvg <= maxDailyThreshold) {
-                        // Alltid inkludera första kapitlet, oavsett längd.
+                    if (currentWeekChars === 0) {
+                        // 1. Always include the first chapter
                         chaptersInWeek.push(nextChap);
                         currentWeekChars = tentativeTotal;
                         i++;
-                    } else if (i === chapterData.length - 1 || tentativeDailyAvg <= dailyTarget * 1.5) {
-                        // Tillåt större överskridning om det är SISTA kapitlet i boken, 
-                        // eller om det är sista kapitlet i VECKAN (och överskridningen inte är extremt stor, max 1.5x daily target).
+                    } else if (i === chapterData.length - 1) {
+                        // 2. If it's the last chapter in the book, include it.
                         chaptersInWeek.push(nextChap);
                         currentWeekChars = tentativeTotal;
                         i++;
-                        break; // Avsluta veckan här
+                        break; // End the week here
+                    } else if (tentativeDailyAvg <= maxDailyAllowance) {
+                        // 3. Inkludera om den dagliga genomsnittliga läsningen inte överskrider den definierade maxgränsen.
+                        chaptersInWeek.push(nextChap);
+                        currentWeekChars = tentativeTotal;
+                        i++;
                     } else {
-                        // Nästa kapitel är för stort för att inkluderas i denna vecka.
+                        // 4. The next chapter is too large to be included in this week.
                         break;
                     }
                 }
@@ -343,9 +403,10 @@
                 let weekLabel = `WEEK ${weekCount}`;
                 let warningMessage = '';
 
-                // Check for warning
-                if (finalAvgCharsPerDay > maxDailyThreshold) {
-                    warningMessage = `<span class="warning"> (WARNING: Exceeds target by ${(finalAvgCharsPerDay - dailyTarget).toLocaleString()} chars/day)</span>`;
+                // Check for warning (if the final average exceeds the allowed threshold)
+                if (finalAvgCharsPerDay > maxDailyAllowance) {
+                    // Corrected Swedish warning message
+                    warningMessage = `<span class="warning"> (VARNING: Genomsnittet överskrider din inställda maxgräns med ${(finalAvgCharsPerDay - dailyTarget).toLocaleString()} tecken/dag)</span>`;
                 }
 
                 // Format final chapter list string
