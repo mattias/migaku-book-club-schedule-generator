@@ -8,6 +8,7 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; background-color: #f9f9f9; color: #333; }
         
         h1 { color: #2c3e50; margin: 0 0 1rem 0; font-size: 1.8rem; }
+        p { margin-bottom: 1.5rem; }
         .controls { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 2rem; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
         .full-width { grid-column: 1 / -1; }
         
@@ -21,7 +22,7 @@
         #result-area { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
         pre { white-space: pre-wrap; font-family: monospace; font-size: 1rem; color: #2c3e50; margin: 0; }
         
-        #speed-input, #chapters-per-week-input { transition: opacity 0.3s, max-height 0.3s; overflow: hidden; }
+        #speed-input, #chapters-per-week-input, #chars-per-week-input { transition: opacity 0.3s, max-height 0.3s; overflow: hidden; }
         .hidden { display: none; }
         
         /* Specific styling for weekly output */
@@ -41,8 +42,9 @@
         <div>
             <label for="scheduleMode">Schedule Mode:</label>
             <select id="scheduleMode" onchange="toggleInput()">
-                <option value="per_day">Characters per Day</option>
-                <option value="per_week">Chapters per Week</option>
+                <option value="per_day">Characters per Day (per chapter)</option>
+                <option value="per_week_chap">Chapters per Week (fixed chapters)</option>
+                <option value="per_week_char">Characters per Week (fixed daily target)</option>
             </select>
         </div>
         
@@ -52,7 +54,7 @@
         </div>
         
         <div id="speed-input">
-            <label for="speed">Chars per day:</label>
+            <label for="speed">Characters per day:</label>
             <input type="number" id="speed" value="3500" step="100">
         </div>
 
@@ -60,6 +62,12 @@
             <label for="chaptersPerWeek">Chapters per Week:</label>
             <input type="number" id="chaptersPerWeek" value="5" min="1">
         </div>
+        
+        <div id="chars-per-week-input" style="display: none;">
+            <label for="dailyTarget">Daily Character Target:</label>
+            <input type="number" id="dailyTarget" value="3200" step="100">
+        </div>
+
 
         <div class="full-width">
             <label for="rawInput">Raw Data (Title + Cumulative Count):</label>
@@ -143,8 +151,15 @@ END
 
         function toggleInput() {
             const mode = document.getElementById('scheduleMode').value;
+            
             document.getElementById('speed-input').style.display = (mode === 'per_day') ? 'block' : 'none';
-            document.getElementById('chapters-per-week-input').style.display = (mode === 'per_week') ? 'block' : 'none';
+            document.getElementById('chapters-per-week-input').style.display = (mode === 'per_week_chap') ? 'block' : 'none';
+            document.getElementById('chars-per-week-input').style.display = (mode === 'per_week_char') ? 'block' : 'none';
+            
+            // For the new mode, hide the per day input and show the daily target input
+            if (mode === 'per_week_char') {
+                 // The 'chars-per-week-input' is the one with the daily target now
+            }
         }
 
         // --- Helper Functions ---
@@ -158,9 +173,8 @@ END
         }
 
         function formatDate(date) {
-            // US locale is common for international groups: Oct 24
+            // Use US locale for consistent international display (e.g., Dec 8)
             const d = new Date(date);
-            // Customize to match user's example style (e.g., 8. Dec)
             const day = d.getDate();
             const month = d.toLocaleString('en-US', { month: 'short' });
             return `${day}. ${month}`;
@@ -197,6 +211,7 @@ END
             let chapterData = [];
             let chapterCounter = 1;
             
+            // Loop for calculating chapter lengths (Next Count - Current Count)
             for (let i = 0; i < lines.length - 1; i += 2) {
                 const title = lines[i];
                 const startCount = Number.parseInt(lines[i+1]);
@@ -209,7 +224,7 @@ END
 
                 const length = nextCount - startCount;
 
-                if (length < 100) continue; 
+                if (length < 100) continue; // Skip very short items (like Cover)
 
                 const roundedLength = Math.round(length / 100) * 100;
                 
@@ -223,20 +238,21 @@ END
             }
 
             // 2. Generate Output based on Mode
-            let outputText = "";
             let outputHtml = ""; 
             
             if (mode === 'per_day') {
                 const speed = Number.parseInt(document.getElementById('speed').value) || 3500;
-                outputText = generatePerDaySchedule(chapterData, currentDate, speed);
-                document.getElementById('output').innerHTML = `<pre>${outputText}</pre>`;
-
-            } else if (mode === 'per_week') {
+                outputHtml = `<pre>${generatePerDaySchedule(chapterData, currentDate, speed)}</pre>`;
+            } else if (mode === 'per_week_chap') {
                 const chaptersPerWeek = Number.parseInt(document.getElementById('chaptersPerWeek').value) || 5;
-                outputHtml = generatePerWeekSchedule(chapterData, currentDate, chaptersPerWeek);
-                document.getElementById('output').innerHTML = outputHtml;
+                outputHtml = generatePerWeekScheduleByChapterCount(chapterData, currentDate, chaptersPerWeek);
+            } else if (mode === 'per_week_char') {
+                const dailyTarget = Number.parseInt(document.getElementById('dailyTarget').value) || 3200;
+                const weeklyTarget = dailyTarget * 7;
+                outputHtml = generatePerWeekScheduleByCharTarget(chapterData, currentDate, weeklyTarget);
             }
 
+            document.getElementById('output').innerHTML = outputHtml;
             document.getElementById('result-area').classList.remove('hidden');
         }
 
@@ -258,15 +274,14 @@ END
 
                 let dateRange = (daysNeeded <= 1) ? `${startStr}` : `${startStr}-${endStr}`;
                 
-                output += `${chapNum}章　${chap.title} ${dateRange} (~${chap.roundedLength} chars)\n`;
+                output += `${chapNum}章　${chap.title} ${dateRange} (~${chap.roundedLength.toLocaleString()} chars)\n`;
 
                 currentDate = getNextDay(endDate);
             }
             return output;
         }
 
-
-        function generatePerWeekSchedule(chapterData, currentDate, chaptersPerWeek) {
+        function generatePerWeekScheduleByChapterCount(chapterData, currentDate, chaptersPerWeek) {
             let output = "";
             let weekCount = 1;
             let currentChapterIndex = 0;
@@ -278,7 +293,7 @@ END
                 
                 const currentWeekChapters = chapterData.slice(currentChapterIndex, currentChapterIndex + chaptersPerWeek);
                 
-                if (currentWeekChapters.length === 0) break; // Should not happen, but safety stop
+                if (currentWeekChapters.length === 0) break;
 
                 let totalWeekChars = 0;
                 let chapterList = "";
@@ -290,16 +305,7 @@ END
 
                 const avgCharsPerDay = Math.round(totalWeekChars / 7);
                 
-                // Handling the last week which might be shorter than 7 days
                 let weekLabel = `WEEK ${weekCount}`;
-                if (currentChapterIndex + chaptersPerWeek >= chapterData.length) {
-                    // Check if the last week is not exactly 7 days
-                    let daysInLastWeek = Math.ceil(totalWeekChars / avgCharsPerDay); // Use average speed to estimate days
-                    
-                    // Since we are forcing 7-day blocks, the date range is usually 7 days, 
-                    // but we adjust the label for the last one if it's the end of the book.
-                    weekLabel += (currentChapterIndex + chaptersPerWeek > chapterData.length && daysInLastWeek <= 7) ? " (last week)" : "";
-                }
 
                 // Build the output block
                 output += `<div class="weekly-output-group">`;
@@ -309,7 +315,71 @@ END
                 output += `</div>`;
                 
                 currentChapterIndex += chaptersPerWeek;
-                currentDate = getNextWeek(weekStart); // Move to the next week's start date
+                currentDate = getNextWeek(weekStart); 
+                weekCount++;
+            }
+            return output;
+        }
+
+        // --- NEW FUNCTION: Characters per Week ---
+        function generatePerWeekScheduleByCharTarget(chapterData, currentDate, weeklyTarget) {
+            let output = "";
+            let weekCount = 1;
+            let currentChapterIndex = 0;
+            
+            while (currentChapterIndex < chapterData.length) {
+                const weekStart = new Date(currentDate);
+                let weekEnd = new Date(currentDate);
+                weekEnd.setDate(currentDate.getDate() + 6); // 7 days total
+                
+                let currentWeekChars = 0;
+                let currentWeekChapters = [];
+                let chapterList = "";
+                let i = currentChapterIndex;
+                
+                // Group chapters until the weekly target is met or exceeded
+                while (i < chapterData.length) {
+                    const nextChap = chapterData[i];
+                    
+                    // Check if adding the next chapter keeps us reasonably close to the target
+                    // or if it's the first chapter of the week (must be included).
+                    if (currentWeekChars === 0 || (currentWeekChars + nextChap.roundedLength) <= weeklyTarget + 500) {
+                        currentWeekChapters.push(nextChap);
+                        currentWeekChars += nextChap.roundedLength;
+                        chapterList += `ch${nextChap.index} ${nextChap.title} (~${nextChap.roundedLength.toLocaleString()} chars)\n`;
+                        i++;
+                    } else {
+                        // If adding the next chapter significantly overshoots the target, 
+                        // stop this week unless it was the very first chapter.
+                        break;
+                    }
+                }
+                
+                if (currentWeekChapters.length === 0) break;
+                
+                const daysForThisWeek = 7;
+                const avgCharsPerDay = Math.round(currentWeekChars / daysForThisWeek);
+                
+                let weekLabel = `WEEK ${weekCount}`;
+                
+                // Adjust label for the final week if it ends before 7 days (e.g., if book ends midweek)
+                if (i >= chapterData.length) {
+                    // Calculate actual days needed based on the requested daily target
+                    const daysNeeded = Math.ceil(currentWeekChars / (weeklyTarget / 7)); 
+                    weekEnd = new Date(weekStart);
+                    weekEnd.setDate(weekStart.getDate() + Math.max(0, daysNeeded - 1));
+                    weekLabel += ` (+ ${daysNeeded - 7} extra days)`; // Placeholder if needed, but keeping 7 day block visually is clearer
+                }
+
+                // Build the output block
+                output += `<div class="weekly-output-group">`;
+                output += `<h4>${weekLabel} (${formatDate(weekStart)} - ${formatDate(weekEnd)})</h4>`;
+                output += `<pre>${chapterList}</pre>`;
+                output += `<p class="total">total reading: ${currentWeekChars.toLocaleString()} chars ≈ ${avgCharsPerDay.toLocaleString()} chars per day</p>`;
+                output += `</div>`;
+
+                currentChapterIndex = i; // Move index to the start of the next chapter group
+                currentDate = getNextWeek(weekStart); 
                 weekCount++;
             }
             return output;
