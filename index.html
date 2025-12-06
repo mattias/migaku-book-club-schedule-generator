@@ -303,7 +303,7 @@ END
                     chapterList += `ch${chap.index} ${chap.title} (~${chap.roundedLength.toLocaleString()} chars)\n`;
                 }
 
-                const avgCharsPerDay = Math.round(totalWeekChars / 7);
+                const avgCharsPerDay = Math.round((totalWeekChars / 7) / 100) * 100;
                 
                 let weekLabel = `WEEK ${weekCount}`;
 
@@ -358,7 +358,7 @@ END
                 if (currentWeekChapters.length === 0) break;
                 
                 const daysForThisWeek = 7;
-                const avgCharsPerDay = Math.round(currentWeekChars / daysForThisWeek);
+                const avgCharsPerDay = Math.round((currentWeekChars / daysForThisWeek) / 100) * 100;
                 
                 let weekLabel = `WEEK ${weekCount}`;
                 
