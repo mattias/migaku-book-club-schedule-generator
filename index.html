@@ -406,7 +406,7 @@
                 // Check for warning (if the final average exceeds the allowed threshold)
                 if (finalAvgCharsPerDay > maxDailyAllowance) {
                     // Corrected Swedish warning message
-                    warningMessage = `<span class="warning"> (VARNING: Genomsnittet överskrider din inställda maxgräns med ${(finalAvgCharsPerDay - dailyTarget).toLocaleString()} tecken/dag)</span>`;
+                    warningMessage = `<span class="warning"> (WARNING: Average exceeds your set limit by ${(finalAvgCharsPerDay - dailyTarget).toLocaleString()} chars/day)</span>`;
                 }
 
                 // Format final chapter list string
